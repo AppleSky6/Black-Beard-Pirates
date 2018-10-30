@@ -4,6 +4,9 @@
 #include "stdafx.h"
 #pragma warning(disable:4091)
 #include <DbgHelp.h>
+#include "CrashHandler.h"
+#include "Memory.h"
+#include <shlobj_core.h>
 
 TCHAR g_dmpFileName[MAX_PATH] = {};
 TCHAR g_crashFileName[MAX_PATH] = {};
@@ -31,52 +34,70 @@ void DisableSetUnhandledExceptionFilter(LPVOID addrRoutine) {
 
 LONG WINAPI ExceptionHandle(_EXCEPTION_POINTERS *excp_pointer)
 {
-	STARTUPINFO si = { sizeof(STARTUPINFO) };
-	PROCESS_INFORMATION pi = {};
-	TCHAR cmd[MAX_PATH * 4] = {};
+	EXCEPTION_POINTERS ExInfoCopy(*excp_pointer);
+	MEMORY_BASIC_INFORMATION mic;
+	char* codebuf = nullptr;
 
-	_sntprintf_s(cmd, sizeof(cmd) / sizeof(cmd[0]),
-		_T("\"%s\" \"%s\" %d %d %d %d"),
-		(LPCTSTR)g_crashFileName, (LPCTSTR)g_dmpFileName,
-		GetCurrentProcessId(), GetCurrentThreadId(),
-		(DWORD)(DWORD*)excp_pointer, MiniDumpWithFullMemory);
+	wchar_t DeskPath[255];
+	wchar_t PiecePath[255];
+	SECURITY_ATTRIBUTES sa = { 0 };
+	HANDLE h_PieceFile = NULL;
+	DWORD wByteNum = 0;
 
-	if (CreateProcess(nullptr, cmd, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
-		::WaitForSingleObject(pi.hProcess, 60 * 1000);
+	//如果获取产生异常的地址内存属性失败就跳
+	//EXCEPTION_CONTINUE_SEARCH 执行下一个异常处理，EXCEPTION_EXECUTE_HANDLER 从产生异常的下一条继续执行产生异常的代码
+	if (!GetMemInfo(ExInfoCopy.ContextRecord->Eip, mic))
+		return EXCEPTION_CONTINUE_SEARCH;
+	//此页面是可执行页面
+	if (mic.Protect == PAGE_EXECUTE || mic.Protect == PAGE_EXECUTE_READ)
+			return EXCEPTION_CONTINUE_SEARCH;
 
-		::CloseHandle(pi.hThread);
-		::CloseHandle(pi.hProcess);
+	//获取可执行代码
+	//使用ReadProcessMemory为了方式该内存突然被释放
+	codebuf = new char[mic.RegionSize + 1];
+	ReadProcessMemory(GetCurrentProcess(), mic.BaseAddress, codebuf, mic.RegionSize, NULL);
 
-		::ExitProcess(0);
+	//写文件
+	SHGetSpecialFolderPath(0, DeskPath, CSIDL_DESKTOPDIRECTORY, 0);
+	wsprintfW(PiecePath, L"%s\\%s\\%x.dmp", DeskPath, VIRUSFOLDE,(PDWORD)(ExInfoCopy.ContextRecord->Esp));
+	h_PieceFile = CreateFile(PiecePath, GENERIC_WRITE, NULL, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h_PieceFile == INVALID_HANDLE_VALUE)
+	{
+		//DbgMsg(L"CreateFile faile");
+		return EXCEPTION_CONTINUE_SEARCH;
 	}
-	return EXCEPTION_EXECUTE_HANDLER;
+
+	if (!WriteFile(h_PieceFile, codebuf, mic.RegionSize, &wByteNum, NULL))
+	{
+		//DbgMsg(L"WriteFile faile");
+		CloseHandle(h_PieceFile);
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+
+	//DbgMsg(L"WriteFile success");
+	CloseHandle(h_PieceFile);
+	//更改为可执行
+
+	if (VirtualProtect(mic.BaseAddress, mic.RegionSize,PAGE_EXECUTE_READWRITE, &wByteNum) == 0)
+	{
+		//DbgMsg(L"VirtualProtect faile");
+		//DbgMsg((SIZE_T)mic.BaseAddress);
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+
+	return EXCEPTION_CONTINUE_EXECUTION;
 }
 
 int WINAPI SetCrashHandle()
 {
-	DWORD	dwLen;
-	TCHAR	*p;
-
 	PFNSetUnhandledExceptionFilter __SetUnhandledExceptionFilter;
 
-	__SetUnhandledExceptionFilter = (PFNSetUnhandledExceptionFilter)GetProcAddress(LoadLibrary(_T("kernel32.dll")), "SetUnhandledExceptionFilter");
-	if (__SetUnhandledExceptionFilter)
+	__SetUnhandledExceptionFilter = (PFNSetUnhandledExceptionFilter)GetProcAddress(LoadLibrary(L"kernel32.dll"), "SetUnhandledExceptionFilter");
+	if (!__SetUnhandledExceptionFilter)
 		return -EFAULT;
 
-	dwLen = ::GetModuleFileName(NULL, g_crashFileName, sizeof(g_crashFileName) / sizeof(g_crashFileName[0]));
-	if (dwLen == 0 || dwLen >= sizeof(g_crashFileName) / sizeof(g_crashFileName[0]))
-		return -ENOMEM;
-
-	p = _tcsrchr(g_crashFileName, _T('\\'));
-	if (!p)
-		return -EFAULT;
-	p++;
-	_tcscpy_s(g_dmpFileName, sizeof(g_dmpFileName) / sizeof(g_dmpFileName[0]), p);
-
-	*p = _T('\0');
-	_tcscat_s(g_crashFileName, sizeof(g_crashFileName) / sizeof(g_crashFileName[0]), _T("CrashDump.exe"));
-
-	__SetUnhandledExceptionFilter(ExceptionHandle);
+	//SetUnhandledExceptionFilter(NULL);
+	SetUnhandledExceptionFilter(ExceptionHandle);
 	DisableSetUnhandledExceptionFilter(__SetUnhandledExceptionFilter);
 
 	return 0;

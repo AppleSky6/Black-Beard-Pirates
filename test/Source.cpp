@@ -14,5 +14,6 @@ void main()
 	_asm{
 		call pByte;
 	}
+	MessageBox(0, "fasdfa", "fsadfasdf", 0);
 }
 
