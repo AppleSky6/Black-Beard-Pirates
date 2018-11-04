@@ -4,12 +4,19 @@
 
 void hook()
 {
-	DWORD fnNew_ptr = NULL;
-	DWORD fnEnd_ptr = NULL;
-	DWORD temp = NULL;
-	FunHandleCode mdtAllocateMemoryOPcode = { 0 };
-	fnNew_ptr = (DWORD)GetProcAddress(GetModuleHandle(L"ntdll.dll"), "ZwAllocateVirtualMemory");
-	GetFunctionHandlerCode(&mdtAllocateMemoryOPcode, fnNew_ptr, &fnEnd_ptr);
-	SetGangPlank(&mdtAllocateMemoryOPcode, fnEnd_ptr);
-	SetHookFunctionHandlerCode((DWORD)hkZwAllocateVirtualMemory, fnEnd_ptr);
+	PLONG WinApiAddress = NULL;
+	for (int i = 0; i <= 10; i++)
+	{
+		pMDTFunInfo mdt = new MDTFunInfo;
+		MDTListFunInfo[i] = mdt;
+	}
+	
+
+	MessageBox(0, L"-------------------", L"GSDFG", 0);
+	WinApiAddress = (PLONG)GetProcAddress(GetModuleHandle(L"ntdll.dll"), "ZwAllocateVirtualMemory");
+	MDTListFunInfo[0]->HookApi_ptr		= WinApiAddress;
+	MDTListFunInfo[0]->WinApiStart_ptr	= WinApiAddress;
+	MDTListFunInfo[0]->HookApi_ptr		= (PLONG)hkZwAllocateVirtualMemory;
+	SetHookFunctionHandlerCode(MDTListFunInfo[0]);
+	MessageBox(0, L"GDFSG", L"GSDFG", 0);
 }

@@ -1,19 +1,21 @@
 #pragma once
 #include "stdafx.h"
 
-typedef struct FUNHANDLECODE
-{
-	BYTE  opcode;
-	DWORD constant;
-}*pFunHandleCode, FunHandleCode;
+//定义函数开头大小
+//32和64不通后期解决64
+#define HANDSIZE 5
 
 typedef struct FUNINFO
 {
-	char   pHandlerCode[5];
-	LONG*  WinApi_ptr      = nullptr;
-	LONG*  WinApiStart_ptr = nullptr;
-	LONG*  GangPlank_ptr   = nullptr;
+	char   pHandlerCode[5];					//扣走的代码（暂定大小是5）
+	LONG*  WinApi_ptr		= nullptr;      //被hook api的地址
+	LONG*  WinApiStart_ptr	= nullptr;      //正真hook 的地址
+	LONG*  HookApi_ptr		= nullptr;      //hook函数的地址
+	LONG*  GangPlank_ptr	= nullptr;	    //跳板函数的地址
 }*pMDTFunInfo, MDTFunInfo;
+
+
+
 
 typedef LONG(__stdcall* tZwAllocateVirtualMemory)(
 	_In_    HANDLE    ProcessHandle,
@@ -34,9 +36,9 @@ LONG WINAPI hkZwAllocateVirtualMemory(
 	);
 
 
-BOOL GetFunctionHandlerCode(pFunHandleCode FunhanderCode_ptr, DWORD WinAPIAddress, PDWORD pEndAPi_ptr);
-BOOL SetHookFunctionHandlerCode(DWORD NewFun_ptr, DWORD oldFun_ptr);
+BOOL SetHookFunctionHandlerCode(pMDTFunInfo FunhanderCode_ptr);
 VOID GangPlank();
-VOID SetGangPlank(pFunHandleCode FunhanderCode_ptr, LONG pEndAPi_ptr);
+VOID SetGangPlank(pMDTFunInfo FunhanderCode_ptr);
 
-LONG GangPlankSize = 60;
+extern pMDTFunInfo	MDTListFunInfo[10];
+extern LONG			GangPlankSize;

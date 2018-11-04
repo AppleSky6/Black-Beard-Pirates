@@ -1,55 +1,92 @@
 #include "stdafx.h"
 #include "Hook.h"
 
+pMDTFunInfo	MDTListFunInfo[10]	= { 0 };
+LONG		GangPlankSize		= 60;
+
 //获取hook处位置和代码
-BOOL GetFunctionHandlerCode(pFunHandleCode FunhanderCode_ptr, DWORD WinAPIAddress, PDWORD pEndAPi_ptr)
+BOOL SetHookFunctionHandlerCode(pMDTFunInfo FunhanderCode_ptr)
 {
 	DWORD oldProtect = NULL;
 	DWORD newProtect = NULL;
-	BOOL  status = FALSE;
+	BOOL  status     = FALSE;
+	LONG  FunOfset   = NULL;
+
+	//获取最终函数地址
+	FunOfset = (LONG)FunhanderCode_ptr->HookApi_ptr - (LONG)FunhanderCode_ptr->WinApiStart_ptr - HANDSIZE;
 
 	//PAGE_EXECUTE_READWRITE  Windows Server 2003和Windows XP：在Windows XP SP2和Windows Server 2003 SP   不支持
-	if (VirtualProtect((VOID*)WinAPIAddress, 5, PAGE_EXECUTE_READWRITE, &oldProtect))
+	if (VirtualProtect(FunhanderCode_ptr->WinApiStart_ptr, HANDSIZE, PAGE_EXECUTE_READWRITE, &oldProtect))
 	{
-		FunhanderCode_ptr->opcode = (BYTE)*(char*)WinAPIAddress;
-		FunhanderCode_ptr->constant = *(DWORD*)(WinAPIAddress + 1);
-		*pEndAPi_ptr = WinAPIAddress;
-		if (FunhanderCode_ptr->opcode == 0xE9)
+		//获取头部代码
+		memcpy_s(FunhanderCode_ptr->pHandlerCode, HANDSIZE, FunhanderCode_ptr->WinApiStart_ptr, HANDSIZE);
+		//如果已经被hook了那么跟进
+		if (FunhanderCode_ptr->pHandlerCode[0] == 0xE9)
 		{
-			if (GetFunctionHandlerCode(FunhanderCode_ptr, FunhanderCode_ptr->constant, pEndAPi_ptr))
+			//准备在此跳转
+			FunhanderCode_ptr->WinApiStart_ptr = (PLONG)(FunhanderCode_ptr->pHandlerCode);
+			if (SetHookFunctionHandlerCode(FunhanderCode_ptr))
 			{
-				VirtualProtect((VOID*)WinAPIAddress, 5, oldProtect, &newProtect);
+				//hook
+				FunhanderCode_ptr->WinApiStart_ptr[0] = 0xE9;
+				*(PLONG)((LONG)FunhanderCode_ptr->WinApiStart_ptr + 1) = FunOfset;
+
+				SetGangPlank(FunhanderCode_ptr);
+
+				//还原页保护
+				VirtualProtect(FunhanderCode_ptr->WinApiStart_ptr, HANDSIZE, oldProtect, &newProtect);
 				status = TRUE;
 				return status;
 			}
+			return  status;
 		}
-		VirtualProtect((VOID*)WinAPIAddress, 5, oldProtect, &newProtect);
+		//hook
+		FunhanderCode_ptr->WinApiStart_ptr[0] = 0xE9;
+		*(PLONG)((LONG)FunhanderCode_ptr->WinApiStart_ptr + 1) = FunOfset;
+
+		SetGangPlank(FunhanderCode_ptr);
+
+		//还原页保护
+		VirtualProtect(FunhanderCode_ptr->WinApiStart_ptr, HANDSIZE, oldProtect, &newProtect);
 		status = TRUE;
 		return status;
 	}
 	return status;
 }
 
-//用来设置hook
-BOOL SetHookFunctionHandlerCode(DWORD NewFun_ptr, DWORD oldFun_ptr)
+//跳板函数
+VOID SetGangPlank(pMDTFunInfo FunhanderCode_ptr)
 {
+	LONG tmp = 0;
+	LONG FunOffset = 0;
 	DWORD oldProtect = NULL;
 	DWORD newProtect = NULL;
-	BOOL  status = FALSE;
-	DWORD FunOffset = NULL;
 
-	FunOffset = NewFun_ptr - oldFun_ptr - 5;
-	//PAGE_EXECUTE_READWRITE  Windows Server 2003和Windows XP：在Windows XP SP2和Windows Server 2003 SP   不支持
-	if (VirtualProtect((VOID*)oldFun_ptr, 5, PAGE_EXECUTE_READWRITE, &oldProtect))
+	VirtualProtect((PLONG)GangPlank, HANDSIZE, PAGE_EXECUTE_READWRITE, &oldProtect);
+
+	//获取到nop的地方
+	for (; tmp < GangPlankSize; tmp++)
 	{
-		*(char*)oldFun_ptr = 0xe9;
-		*(DWORD*)(oldFun_ptr + 1) = FunOffset;
-		VirtualProtect((VOID*)oldFun_ptr, 5, oldProtect, &newProtect);
-		status = TRUE;
-		return status;
+		if (*(char*)((LONG)GangPlank + tmp) == 0x90)
+			break;
 	}
-	return status;
+
+	//获取跳板函数的开始
+	FunhanderCode_ptr->GangPlank_ptr = (LONG*)((LONG)GangPlank + tmp);
+
+	//还原扣走的代码
+	memcpy_s(FunhanderCode_ptr->GangPlank_ptr, HANDSIZE, FunhanderCode_ptr->pHandlerCode, HANDSIZE);
+
+	//计算距离
+	FunOffset = (LONG)FunhanderCode_ptr->WinApiStart_ptr - ((LONG)FunhanderCode_ptr->GangPlank_ptr + 5);
+
+	//jmp到原始函数
+	*(char*)((LONG)FunhanderCode_ptr->GangPlank_ptr + HANDSIZE) = 0xE9;
+	*(LONG*)((LONG)FunhanderCode_ptr->GangPlank_ptr + HANDSIZE + 1) = FunOffset;
+
+	VirtualProtect((PLONG)GangPlank, HANDSIZE, oldProtect, &newProtect);
 }
+
 
 //跳板函数
 VOID GangPlank(
@@ -139,32 +176,6 @@ VOID GangPlank(
 	};
 }
 
-VOID SetGangPlank(pFunHandleCode FunhanderCode_ptr, LONG WinAPIAddress)
-{
-	LONG GangPlank_ptr = (LONG)GangPlank;
-	LONG tmp = 0;
-	LONG FunOffset = 0;
-
-	//获取到nop的地方
-	for (; tmp < GangPlankSize; tmp++)
-	{
-		if(*(long*)(GangPlank_ptr + tmp) == 0x90)
-			break;
-	}
-
-	FunhanderCode_ptr += tmp;
-
-	//扣走的代码
-	*(char*)GangPlank_ptr = FunhanderCode_ptr->opcode;
-	*(LONG*)(GangPlank_ptr + 1) = FunhanderCode_ptr->constant;
-
-	//计算距离
-	FunOffset = GangPlank_ptr -  WinAPIAddress;
-
-	//jmp到原始函数
-	*(char*)(GangPlank_ptr + 5) = 0xE9;
-	*(LONG*)(GangPlank_ptr + 5 + 1) = FunOffset;
-}
 
 LONG WINAPI hkZwAllocateVirtualMemory(
 	_In_    HANDLE    ProcessHandle,
@@ -175,23 +186,13 @@ LONG WINAPI hkZwAllocateVirtualMemory(
 	_In_    ULONG     Protect
 )
 {
-	DWORD Temp = NULL;
-	Temp = (DWORD)GetProcAddress(GetModuleHandle(L"ntdll.dll"), "ZwAllocateVirtualMemory");
-	tZwAllocateVirtualMemory oZwAllocateVirtualMemory;
-	oZwAllocateVirtualMemory = (tZwAllocateVirtualMemory)(Temp + 5);
-
+	tZwAllocateVirtualMemory oZwAllocateVirtualMemory = nullptr;
+	//如果是可执行属性那么就更改为不可执行
 	if (Protect == PAGE_EXECUTE || Protect == PAGE_EXECUTE_READWRITE || Protect == PAGE_EXECUTE_READ || Protect == PAGE_EXECUTE_WRITECOPY)
 		Protect = PAGE_READWRITE;
-	//Temp = vFunHandleCode[0].constant;
-	oZwAllocateVirtualMemory = 0;
-
-	oZwAllocateVirtualMemory(
-		ProcessHandle,
-		BaseAddress,
-		ZeroBits,
-		RegionSize,
-		AllocationType,
-		Protect);
+	//更改函数到跳板函数
+	oZwAllocateVirtualMemory = (tZwAllocateVirtualMemory)(MDTListFunInfo[0]->GangPlank_ptr);
+	oZwAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
 	return 0;
 }
 

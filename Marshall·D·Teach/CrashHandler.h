@@ -3,6 +3,4 @@
 #include "_global.h"
 
 
-
-
 int WINAPI SetCrashHandle();
