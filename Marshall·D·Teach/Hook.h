@@ -1,5 +1,8 @@
 #pragma once
 #include "stdafx.h"
+#include "_global.h"
+#include <shlobj_core.h>
+#include "Memory.h"
 
 //定义函数开头大小
 //32和64不通后期解决64
@@ -36,9 +39,12 @@ LONG WINAPI hkZwAllocateVirtualMemory(
 	);
 
 
+BOOL HookInit();
 BOOL SetHookFunctionHandlerCode(pMDTFunInfo FunhanderCode_ptr);
-VOID GangPlank();
 VOID SetGangPlank(pMDTFunInfo FunhanderCode_ptr);
+LONG WINAPI ExceptionHandle(_EXCEPTION_POINTERS *excp_pointer);
 
-extern pMDTFunInfo	MDTListFunInfo[10];
-extern LONG			GangPlankSize;
+extern pMDTFunInfo	MDTListFunInfo[10];			//被hook函数信息结构体链表
+extern LONG*		GangPlank_ptr;				//跳板位置
+extern LONG			GangPlankSize;				//跳板大小
+extern wchar_t		g_DumpPath[MAX_PATH];		//桌面文件路径
