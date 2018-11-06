@@ -5,23 +5,34 @@
 
 //https://docs.microsoft.com/zh-cn/windows/desktop/Memory/memory-protection-constants 页保护属性常量
 //获取页属性
-BOOL GetMemInfo(SIZE_T Address, MEMORY_BASIC_INFORMATION& mic)
+BOOL GetMemInfo(LONG Address, MEMORY_BASIC_INFORMATION& mic)
 {
-	SIZE_T tpAddress = Address;
-	//整数对齐
-	tpAddress = (tpAddress / 0x1000) * 0x1000;
-	do
+	MEMORY_BASIC_INFORMATION tq_mic;
+
+	//直接返回
+	if (Address < 0x1000)
 	{
-		if (DWORD dwResult = VirtualQuery((PVOID)Address, &mic, sizeof(MEMORY_BASIC_INFORMATION)) != 0)
-			//if (mic.RegionSize + (SIZE_T)mic.BaseAddress > Address && mic.Protect != PAGE_EXECUTE && mic.Protect != PAGE_EXECUTE_READ )
-			if (mic.RegionSize + (SIZE_T)mic.BaseAddress > Address)
+		return FALSE;
+	}
+
+	//整数对齐
+	Address = (Address / 0x1000) * 0x1000;
+
+	if (VirtualQuery((PVOID)Address, &mic, sizeof(MEMORY_BASIC_INFORMATION)) != 0)
+	{
+		if (VirtualQuery((PVOID)(Address - 0x1000), &tq_mic, sizeof(MEMORY_BASIC_INFORMATION)) != 0)
+		{
+			if (tq_mic.Protect == mic.Protect)
 			{
-				DbgMsg(tpAddress);
-				return TRUE;
+				if (GetMemInfo((Address - 0x1000), mic) == FALSE)
+				{
+					mic = tq_mic;
+					return TRUE;
+				}		
 			}
-			else
-				return FALSE;
-		tpAddress = tpAddress - 0x1000;
-	} while (tpAddress > 0);
+			return TRUE;
+		}
+		return TRUE;
+	}
 	return FALSE;
 }

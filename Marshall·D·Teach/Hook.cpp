@@ -1,10 +1,11 @@
 #include "stdafx.h"
 #include "Hook.h"
 
-pMDTFunInfo	MDTListFunInfo[10]		= { 0 };
-wchar_t		g_DumpPath[MAX_PATH]	= { 0 };
-PLONG		GangPlank_ptr			= nullptr;
-LONG		GangPlankSize			= 60;
+pMDTFunInfo		MDTListFunInfo[10]				= { 0 };
+std::vector<pmdzMemDumpInfo>	MDTListMemInfo;
+wchar_t			g_DumpPath[MAX_PATH]			= { 0 };
+PLONG			GangPlank_ptr					= nullptr;
+LONG			GangPlankSize					= NULL;
 
 //hook前信息的初始化
 BOOL HookInit()
@@ -47,7 +48,7 @@ BOOL SetHookFunctionHandlerCode(pMDTFunInfo FunhanderCode_ptr)
 
 	//获取最终函数地址
 	FunOfset = (LONG)FunhanderCode_ptr->HookApi_ptr - (LONG)FunhanderCode_ptr->WinApiStart_ptr - HANDSIZE;
-
+	MessageBox(0, L"-----------------", L"------------", 0);
 	//PAGE_EXECUTE_READWRITE  Windows Server 2003和Windows XP：在Windows XP SP2和Windows Server 2003 SP   不支持
 	if (VirtualProtect(FunhanderCode_ptr->WinApiStart_ptr, HANDSIZE, PAGE_EXECUTE_READWRITE, &oldProtect))
 	{
@@ -90,68 +91,57 @@ BOOL SetHookFunctionHandlerCode(pMDTFunInfo FunhanderCode_ptr)
 //异常处理
 LONG WINAPI ExceptionHandle(_EXCEPTION_POINTERS *excp_pointer)
 {
-	EXCEPTION_POINTERS ExInfoCopy(*excp_pointer);
-	MEMORY_BASIC_INFORMATION mic;
 	char* codebuf = nullptr;
-	wchar_t PiecePath[255];
+	wchar_t PiecePath[MAX_PATH];
 	SECURITY_ATTRIBUTES sa = { 0 };
 	HANDLE h_PieceFile = NULL;
 	DWORD wByteNum = 0;
 
-	//如果获取产生异常的地址内存属性失败就跳
-	//EXCEPTION_CONTINUE_SEARCH 执行下一个异常处理，EXCEPTION_EXECUTE_HANDLER 从产生异常的下一条继续执行产生异常的代码
-	if (!GetMemInfo(ExInfoCopy.ContextRecord->Eip, mic))
-		return EXCEPTION_CONTINUE_SEARCH;
-	//此页面是可执行页面
-	if (mic.Protect == PAGE_EXECUTE || mic.Protect == PAGE_EXECUTE_READ)
-		return EXCEPTION_CONTINUE_SEARCH;
-
-	//获取可执行代码
-	//使用ReadProcessMemory为了方式该内存突然被释放
-	codebuf = new char[mic.RegionSize + 1];
-	ReadProcessMemory(GetCurrentProcess(), mic.BaseAddress, codebuf, mic.RegionSize, NULL);
-
-	//写文件
-	wsprintfW(PiecePath, L"%s\\%x.dmp", g_DumpPath, DUMPFOLDE, (PDWORD)(ExInfoCopy.ContextRecord->Esp));
-	h_PieceFile = CreateFile(PiecePath, GENERIC_WRITE, NULL, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h_PieceFile == INVALID_HANDLE_VALUE)
+	for (auto tmp : MDTListMemInfo)
 	{
-		return EXCEPTION_CONTINUE_SEARCH;
+		if ((tmp->MemSize + (LONG)tmp->pMemStart) > excp_pointer->ContextRecord->Eip && (LONG)tmp->pMemStart <= excp_pointer->ContextRecord->Eip)
+		{
+			//写文件
+			wsprintfW(PiecePath, L"%s\\%x.dmp", g_DumpPath, DUMPFOLDE, (PDWORD)(excp_pointer->ContextRecord->Esp));
+			h_PieceFile = CreateFile(PiecePath, GENERIC_WRITE, NULL, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+			if (h_PieceFile == INVALID_HANDLE_VALUE)
+			{
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+			//获取可执行代码
+			//使用ReadProcessMemory为了方式该内存突然被释放
+			codebuf = new char[tmp->MemSize + 1];
+			ReadProcessMemory(GetCurrentProcess(), tmp->pMemStart, codebuf, tmp->MemSize, NULL);
+
+			if (!WriteFile(h_PieceFile, codebuf, tmp->MemSize, &wByteNum, NULL))
+			{
+				delete codebuf;
+				CloseHandle(h_PieceFile);
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+			delete codebuf;
+			CloseHandle(h_PieceFile);
+
+			//更改为可执行
+			if (VirtualProtect(tmp->pMemStart, tmp->MemSize, tmp->Protect, &wByteNum) == 0)
+			{
+				return EXCEPTION_CONTINUE_SEARCH;
+			}
+			return EXCEPTION_CONTINUE_EXECUTION;
+		}
 	}
-
-	if (!WriteFile(h_PieceFile, codebuf, mic.RegionSize, &wByteNum, NULL))
-	{
-		CloseHandle(h_PieceFile);
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-
-	CloseHandle(h_PieceFile);
-
-	//更改为可执行
-	if (VirtualProtect(mic.BaseAddress, mic.RegionSize, PAGE_EXECUTE_READWRITE, &wByteNum) == 0)
-	{
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-
-	return EXCEPTION_CONTINUE_EXECUTION;
+	
+	return EXCEPTION_CONTINUE_SEARCH;
 }
 
 //跳板函数
 VOID SetGangPlank(pMDTFunInfo FunhanderCode_ptr)
 {
-	LONG tmp = 0;
 	LONG FunOffset = 0;
 
-
-	//获取到nop的地方
-	for (; tmp < GangPlankSize; tmp++)
-	{
-		if (*(char*)((LONG)GangPlank_ptr + tmp) == 0x90)
-			break;
-	}
-
 	//获取跳板函数的开始
-	FunhanderCode_ptr->GangPlank_ptr = (LONG*)((LONG)GangPlank_ptr + tmp);
+	FunhanderCode_ptr->GangPlank_ptr = (LONG*)((LONG)GangPlank_ptr);
+	GangPlank_ptr = (PLONG)((LONG)GangPlank_ptr + 10);
 
 	//还原扣走的代码
 	memcpy_s(FunhanderCode_ptr->GangPlank_ptr, HANDSIZE, FunhanderCode_ptr->pHandlerCode, HANDSIZE);
@@ -164,6 +154,7 @@ VOID SetGangPlank(pMDTFunInfo FunhanderCode_ptr)
 	*(LONG*)((LONG)FunhanderCode_ptr->GangPlank_ptr + HANDSIZE + 1) = FunOffset;
 }
 
+//hook ZwAllocateVirtualMemory 回调函数
 LONG WINAPI hkZwAllocateVirtualMemory(
 	_In_    HANDLE    ProcessHandle,
 	_Inout_ PVOID     *BaseAddress,
@@ -174,11 +165,36 @@ LONG WINAPI hkZwAllocateVirtualMemory(
 )
 {
 	tZwAllocateVirtualMemory oZwAllocateVirtualMemory = nullptr;
-	//如果是可执行属性那么就更改为不可执行
-	if (Protect == PAGE_EXECUTE || Protect == PAGE_EXECUTE_READWRITE || Protect == PAGE_EXECUTE_READ || Protect == PAGE_EXECUTE_WRITECOPY)
-		Protect = PAGE_READWRITE;
-	//更改函数到跳板函数
+	PLONG tmpStart = nullptr;
+	PLONG tmpSize  = nullptr;
+
 	oZwAllocateVirtualMemory = (tZwAllocateVirtualMemory)(MDTListFunInfo[0]->GangPlank_ptr);
+
+	//必须是已经提交的页面
+	if (AllocationType == MEM_COMMIT)
+	{
+		//如果是可执行属性那么就更改为不可执行
+		if (Protect == PAGE_EXECUTE || Protect == PAGE_EXECUTE_READWRITE || Protect == PAGE_EXECUTE_READ || Protect == PAGE_EXECUTE_WRITECOPY)
+		{
+			pmdzMemDumpInfo tmpInfo = nullptr;
+			tmpInfo = new mdzMemDumpInfo;
+			//保存内存信息
+			tmpInfo->Protect = Protect;
+			//更改保护类型
+			Protect = PAGE_READWRITE;
+
+			//备份返回地址
+			tmpStart = (PLONG)BaseAddress;
+			tmpSize  = (PLONG)RegionSize;
+			//跳板函数
+			oZwAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
+			tmpInfo->MemSize = *tmpSize;
+			tmpInfo->pMemStart = (PLONG)*BaseAddress;
+			MDTListMemInfo.push_back(tmpInfo);
+			return 0;
+		}	
+	}
+	//更改函数到跳板函数
 	oZwAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
 	return 0;
 }

@@ -1,4 +1,4 @@
 #pragma once
 #include "stdafx.h"
 
-BOOL GetMemInfo(SIZE_T Address, MEMORY_BASIC_INFORMATION& mic);
+BOOL GetMemInfo(LONG Address, MEMORY_BASIC_INFORMATION& mic);

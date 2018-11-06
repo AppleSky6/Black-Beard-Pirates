@@ -45,6 +45,5 @@ int WINAPI SetCrashHandle()
 	AddVectoredExceptionHandler(1, ExceptionHandle);
 	//SetUnhandledExceptionFilter(ExceptionHandle);
 	//DisableSetUnhandledExceptionFilter(__SetUnhandledExceptionFilter);
-
 	return 0;
 }
