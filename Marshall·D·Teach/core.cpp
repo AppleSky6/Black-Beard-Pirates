@@ -12,5 +12,12 @@ void hook()
 	MDTListFunInfo[0]->HookApi_ptr		= (PLONG)hkZwAllocateVirtualMemory;
 	SetHookFunctionHandlerCode(MDTListFunInfo[0]);
 
+	WinApiAddress = (PLONG)GetProcAddress(GetModuleHandle(L"ntdll.dll"), "ZwProtectVirtualMemory");
+	MDTListFunInfo[1]->HookApi_ptr = WinApiAddress;
+	MDTListFunInfo[1]->WinApiStart_ptr = WinApiAddress;
+	MDTListFunInfo[1]->HookApi_ptr = (PLONG)hkZwProtectVirtualMemory;
+	SetHookFunctionHandlerCode(MDTListFunInfo[1]);
+
+	off = TRUE;
 
 }

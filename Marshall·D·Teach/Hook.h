@@ -8,6 +8,8 @@
 //定义函数开头大小
 //32和64不通后期解决64
 #define HANDSIZE 5
+//有的系统请求内存
+#define EXCEPTIONSIZE	0X100
 
 //定义hook信息结构体
 typedef struct FUNINFO
@@ -23,7 +25,7 @@ typedef struct FUNINFO
 typedef struct MEMDUMPINFO
 {
 	PLONG pMemStart = nullptr;              //内存开始位置
-	LONG  MemSize   = NULL;					//内存大小
+	ULONG MemSize   = NULL;					//内存大小
 	ULONG Protect   = NULL;					//保护属性
 }*pmdzMemDumpInfo,mdzMemDumpInfo;
 
@@ -46,6 +48,21 @@ LONG WINAPI hkZwAllocateVirtualMemory(
 	_In_    ULONG     Protect
 	);
 
+typedef LONG(__stdcall* tZwProtectVirtualMemory)(
+	IN HANDLE               ProcessHandle,
+	IN OUT PVOID            *BaseAddress,
+	IN OUT PULONG           NumberOfBytesToProtect,
+	IN ULONG                NewAccessProtection,
+	OUT PULONG              OldAccessProtection
+	);
+
+LONG WINAPI hkZwProtectVirtualMemory(
+	IN HANDLE               ProcessHandle,
+	IN OUT PVOID            *BaseAddress,
+	IN OUT PULONG           NumberOfBytesToProtect,
+	IN ULONG                NewAccessProtection,
+	OUT PULONG              OldAccessProtection
+	);
 
 BOOL HookInit();
 BOOL SetHookFunctionHandlerCode(pMDTFunInfo FunhanderCode_ptr);
@@ -59,3 +76,4 @@ extern std::vector<pmdzMemDumpInfo>	MDTListMemInfo;						//可执行内存信息
 extern wchar_t						g_DumpPath[MAX_PATH];				//桌面文件路径
 extern PLONG						GangPlank_ptr;						//跳板位置
 extern LONG							GangPlankSize;						//跳板大小
+extern BOOL							off;								//hook 了VirtualProtect导致在hook的其他函数的时更改保护属性无限循环 增加开关 hook完所有函数后统一开始干活

@@ -6,6 +6,8 @@ std::vector<pmdzMemDumpInfo>	MDTListMemInfo;
 wchar_t			g_DumpPath[MAX_PATH]			= { 0 };
 PLONG			GangPlank_ptr					= nullptr;
 LONG			GangPlankSize					= NULL;
+BOOL            off = FALSE;
+
 
 //hook前信息的初始化
 BOOL HookInit()
@@ -91,46 +93,43 @@ BOOL SetHookFunctionHandlerCode(pMDTFunInfo FunhanderCode_ptr)
 //异常处理
 LONG WINAPI ExceptionHandle(_EXCEPTION_POINTERS *excp_pointer)
 {
+	DWORD wByteNum = 0;
 	char* codebuf = nullptr;
 	wchar_t PiecePath[MAX_PATH];
 	SECURITY_ATTRIBUTES sa = { 0 };
 	HANDLE h_PieceFile = NULL;
-	DWORD wByteNum = 0;
+
+	tZwProtectVirtualMemory oZwProtectVirtualMemory = nullptr;
+	oZwProtectVirtualMemory = (tZwProtectVirtualMemory)(MDTListFunInfo[1]->GangPlank_ptr);
 
 	for (auto tmp : MDTListMemInfo)
 	{
 		if ((tmp->MemSize + (LONG)tmp->pMemStart) > excp_pointer->ContextRecord->Eip && (LONG)tmp->pMemStart <= excp_pointer->ContextRecord->Eip)
 		{
 			//写文件
-			wsprintfW(PiecePath, L"%s\\%x.dmp", g_DumpPath, DUMPFOLDE, (PDWORD)(excp_pointer->ContextRecord->Esp));
+			wsprintfW(PiecePath, L"%s\\%x.dmp", g_DumpPath, tmp->pMemStart);
 			h_PieceFile = CreateFile(PiecePath, GENERIC_WRITE, NULL, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-			if (h_PieceFile == INVALID_HANDLE_VALUE)
-			{
-				return EXCEPTION_CONTINUE_SEARCH;
-			}
+
 			//获取可执行代码
 			//使用ReadProcessMemory为了方式该内存突然被释放
 			codebuf = new char[tmp->MemSize + 1];
 			ReadProcessMemory(GetCurrentProcess(), tmp->pMemStart, codebuf, tmp->MemSize, NULL);
-
-			if (!WriteFile(h_PieceFile, codebuf, tmp->MemSize, &wByteNum, NULL))
-			{
-				delete codebuf;
-				CloseHandle(h_PieceFile);
-				return EXCEPTION_CONTINUE_SEARCH;
-			}
+			WriteFile(h_PieceFile, codebuf, tmp->MemSize, &wByteNum, NULL);
 			delete codebuf;
 			CloseHandle(h_PieceFile);
 
+			PVOID tmpStart = tmp->pMemStart;
+			ULONG tmpSize = tmp->MemSize;
+
 			//更改为可执行
-			if (VirtualProtect(tmp->pMemStart, tmp->MemSize, tmp->Protect, &wByteNum) == 0)
+			if (oZwProtectVirtualMemory(GetCurrentProcess(), &tmpStart, &tmpSize, tmp->Protect, &wByteNum) == 0)
 			{
-				return EXCEPTION_CONTINUE_SEARCH;
+				return EXCEPTION_CONTINUE_EXECUTION;
 			}
-			return EXCEPTION_CONTINUE_EXECUTION;
+			
+			return EXCEPTION_CONTINUE_SEARCH;
 		}
 	}
-	
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -167,11 +166,12 @@ LONG WINAPI hkZwAllocateVirtualMemory(
 	tZwAllocateVirtualMemory oZwAllocateVirtualMemory = nullptr;
 	PLONG tmpStart = nullptr;
 	PLONG tmpSize  = nullptr;
-
+	LONG  status = NULL;
 	oZwAllocateVirtualMemory = (tZwAllocateVirtualMemory)(MDTListFunInfo[0]->GangPlank_ptr);
 
-	//必须是已经提交的页面
-	if (AllocationType == MEM_COMMIT)
+	//必须是已经提交的页面  这样判有问题
+	//if (AllocationType == MEM_COMMIT)
+	if (off == true && EXCEPTIONSIZE < *(PLONG)RegionSize)
 	{
 		//如果是可执行属性那么就更改为不可执行
 		if (Protect == PAGE_EXECUTE || Protect == PAGE_EXECUTE_READWRITE || Protect == PAGE_EXECUTE_READ || Protect == PAGE_EXECUTE_WRITECOPY)
@@ -183,19 +183,56 @@ LONG WINAPI hkZwAllocateVirtualMemory(
 			//更改保护类型
 			Protect = PAGE_READWRITE;
 
-			//备份返回地址
-			tmpStart = (PLONG)BaseAddress;
-			tmpSize  = (PLONG)RegionSize;
 			//跳板函数
-			oZwAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
-			tmpInfo->MemSize = *tmpSize;
+			status = oZwAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
+			tmpInfo->MemSize = *(PLONG)RegionSize;
 			tmpInfo->pMemStart = (PLONG)*BaseAddress;
 			MDTListMemInfo.push_back(tmpInfo);
-			return 0;
-		}	
+			return status;
+		}
 	}
+
 	//更改函数到跳板函数
-	oZwAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
-	return 0;
+	status = oZwAllocateVirtualMemory(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
+	return status;
 }
 
+
+//hook NtProtectVirtualMemory
+LONG WINAPI hkZwProtectVirtualMemory(
+	IN HANDLE               ProcessHandle,
+	IN OUT PVOID            *BaseAddress,
+	IN OUT PULONG           NumberOfBytesToProtect,
+	IN ULONG                NewAccessProtection,
+	OUT PULONG              OldAccessProtection
+)
+{
+	DWORD wByteNum	= 0;
+	LONG  status	= NULL;
+
+	tZwProtectVirtualMemory oZwProtectVirtualMemory = nullptr;
+	oZwProtectVirtualMemory = (tZwProtectVirtualMemory)(MDTListFunInfo[1]->GangPlank_ptr);
+
+	if (off == TRUE && EXCEPTIONSIZE < *(PLONG)NumberOfBytesToProtect)
+	{
+		if (NewAccessProtection == PAGE_EXECUTE || NewAccessProtection == PAGE_EXECUTE_READWRITE || NewAccessProtection == PAGE_EXECUTE_READ || NewAccessProtection == PAGE_EXECUTE_WRITECOPY)
+		{
+
+			pmdzMemDumpInfo tmpInfo = nullptr;
+			tmpInfo = new mdzMemDumpInfo;
+			//保存内存信息
+			tmpInfo->Protect = NewAccessProtection;
+			//更改保护类型
+			NewAccessProtection = PAGE_READWRITE;
+			status = oZwProtectVirtualMemory(ProcessHandle, BaseAddress, NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
+
+			tmpInfo->pMemStart = (PLONG)*BaseAddress;
+			tmpInfo->MemSize = *(PLONG)NumberOfBytesToProtect;
+			
+			MDTListMemInfo.push_back(tmpInfo);
+			return status;
+		}
+	}
+	status = oZwProtectVirtualMemory(ProcessHandle, BaseAddress, NumberOfBytesToProtect, NewAccessProtection, OldAccessProtection);
+	return status;
+}
