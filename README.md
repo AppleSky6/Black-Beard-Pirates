@@ -1,2 +1,4 @@
 # Black-Beard-Pirates
-Catching mice from memory
+Black-Beard-Pirates is the fast dump of executable memory during software execution.
+
+uses library: https://github.com/hasherezade/libpeconv.git
